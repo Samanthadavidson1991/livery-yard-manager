@@ -18,19 +18,26 @@ async function hasApprovedOverlap(
   end: Date,
   excludeGroupId?: string,
 ): Promise<boolean> {
+  // Resolve the booking IDs that belong to the excluded group up front. We
+  // cannot exclude with `NOT: { OR: [{ id }, { recurrenceParentId }] }` because
+  // SQL three-valued logic drops rows where `recurrenceParentId` is NULL (every
+  // non-recurring booking), which would hide genuine clashes.
+  let excludeIds: string[] = [];
+  if (excludeGroupId) {
+    const group = await prisma.booking.findMany({
+      where: { OR: [{ id: excludeGroupId }, { recurrenceParentId: excludeGroupId }] },
+      select: { id: true },
+    });
+    excludeIds = group.map((b) => b.id);
+  }
+
   const overlap = await prisma.booking.findFirst({
     where: {
       arenaId,
       status: "APPROVED",
       start: { lt: end },
       end: { gt: start },
-      ...(excludeGroupId
-        ? {
-            NOT: {
-              OR: [{ id: excludeGroupId }, { recurrenceParentId: excludeGroupId }],
-            },
-          }
-        : {}),
+      ...(excludeIds.length ? { id: { notIn: excludeIds } } : {}),
     },
   });
   return !!overlap;
