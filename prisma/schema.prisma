@@ -1,0 +1,320 @@
+// Livery Yard Manager - data model
+// Docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Users & accounts
+// ---------------------------------------------------------------------------
+
+enum Role {
+  ADMIN
+  LIVERY
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         Role     @default(LIVERY)
+  liveryId     String?
+  livery       Livery?  @relation(fields: [liveryId], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now())
+
+  notices    Notice[]
+  forumPosts ForumPost[]
+  bookings   Booking[]
+  documents  Document[]
+}
+
+// A livery = a customer account on the yard (may own multiple horses)
+model Livery {
+  id            String   @id @default(cuid())
+  name          String
+  contactName   String?
+  email         String?
+  phone         String?
+  addressLine1  String?
+  addressLine2  String?
+  city          String?
+  postcode      String?
+  notes         String?
+  createdAt     DateTime @default(now())
+
+  users         User[]
+  horses        Horse[]
+  documents     Document[]
+  bills         Bill[]
+  services      LiveryService[]
+  storeOrders   StoreOrder[]
+  bookings      Booking[]
+  permissions   LiveryPermission[]
+  forumMembers  ForumMember[]
+  storageSpots  StorageSpot[]
+}
+
+// Which optional modules a given livery account can access
+model LiveryPermission {
+  id       String  @id @default(cuid())
+  liveryId String
+  livery   Livery  @relation(fields: [liveryId], references: [id], onDelete: Cascade)
+  module   String
+  enabled  Boolean @default(true)
+
+  @@unique([liveryId, module])
+}
+
+// ---------------------------------------------------------------------------
+// Horses, barns, boxes, storage
+// ---------------------------------------------------------------------------
+
+model Horse {
+  id                  String   @id @default(cuid())
+  liveryId            String
+  livery              Livery   @relation(fields: [liveryId], references: [id], onDelete: Cascade)
+  name                String
+  age                 Int?
+  sex                 String?
+  height              String?
+  color               String?
+  vetName             String?
+  vetPhone            String?
+  emergencyContact    String?
+  emergencyPhone      String?
+  notes               String?
+  boxId               String?  @unique
+  box                 Box?     @relation(fields: [boxId], references: [id], onDelete: SetNull)
+  createdAt           DateTime @default(now())
+
+  documents Document[]
+}
+
+model Barn {
+  id          String  @id @default(cuid())
+  name        String
+  description String?
+  boxes       Box[]
+}
+
+model Box {
+  id      String  @id @default(cuid())
+  barnId  String
+  barn    Barn    @relation(fields: [barnId], references: [id], onDelete: Cascade)
+  number  String
+  notes   String?
+  horse   Horse?
+}
+
+enum StorageType {
+  TRAILER
+  HORSEBOX
+  OTHER
+}
+
+model StorageSpot {
+  id            String      @id @default(cuid())
+  label         String
+  type          StorageType @default(TRAILER)
+  assignedLiveryId String?
+  assignedLivery   Livery?  @relation(fields: [assignedLiveryId], references: [id], onDelete: SetNull)
+  notes         String?
+}
+
+// ---------------------------------------------------------------------------
+// Documents (insurance, photos, uploaded bills, etc.)
+// ---------------------------------------------------------------------------
+
+enum DocumentType {
+  INSURANCE
+  PHOTO
+  BILL
+  OTHER
+}
+
+model Document {
+  id           String       @id @default(cuid())
+  liveryId     String
+  livery       Livery       @relation(fields: [liveryId], references: [id], onDelete: Cascade)
+  horseId      String?
+  horse        Horse?       @relation(fields: [horseId], references: [id], onDelete: SetNull)
+  type         DocumentType @default(OTHER)
+  title        String
+  fileName     String
+  filePath     String
+  mimeType     String
+  uploadedById String?
+  uploadedBy   User?        @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime     @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Billing, store & services
+// ---------------------------------------------------------------------------
+
+enum BillStatus {
+  DRAFT
+  SENT
+  PAID
+}
+
+model Bill {
+  id          String     @id @default(cuid())
+  liveryId    String
+  livery      Livery     @relation(fields: [liveryId], references: [id], onDelete: Cascade)
+  title       String
+  status      BillStatus @default(DRAFT)
+  createdAt   DateTime   @default(now())
+  lines       BillLine[]
+}
+
+model BillLine {
+  id          String  @id @default(cuid())
+  billId      String
+  bill        Bill    @relation(fields: [billId], references: [id], onDelete: Cascade)
+  description String
+  quantity    Float   @default(1)
+  unitPrice   Float   @default(0)
+}
+
+enum CatalogType {
+  SERVICE
+  STORE
+}
+
+// Admin-managed catalog of services (recurring) and store items (one-off)
+model CatalogItem {
+  id          String      @id @default(cuid())
+  name        String
+  description String?
+  price       Float       @default(0)
+  type        CatalogType
+  frequency   String?     // e.g. DAILY, WEEKLY (services only)
+  active      Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+
+  liveryServices LiveryService[]
+  storeOrders    StoreOrder[]
+}
+
+// A recurring service a livery has opted into (checkbox)
+model LiveryService {
+  id            String      @id @default(cuid())
+  liveryId      String
+  livery        Livery      @relation(fields: [liveryId], references: [id], onDelete: Cascade)
+  catalogItemId String
+  catalogItem   CatalogItem @relation(fields: [catalogItemId], references: [id], onDelete: Cascade)
+  active        Boolean     @default(true)
+  createdAt     DateTime    @default(now())
+
+  @@unique([liveryId, catalogItemId])
+}
+
+// A store item a livery has added to their bill (one-off)
+model StoreOrder {
+  id            String      @id @default(cuid())
+  liveryId      String
+  livery        Livery      @relation(fields: [liveryId], references: [id], onDelete: Cascade)
+  catalogItemId String
+  catalogItem   CatalogItem @relation(fields: [catalogItemId], references: [id], onDelete: Cascade)
+  quantity      Int         @default(1)
+  billed        Boolean     @default(false)
+  createdAt     DateTime    @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Notice board & forums
+// ---------------------------------------------------------------------------
+
+model Notice {
+  id          String   @id @default(cuid())
+  title       String
+  body        String
+  pinned      Boolean  @default(false)
+  createdById String?
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Forum {
+  id          String        @id @default(cuid())
+  name        String
+  description String?
+  isCentral   Boolean       @default(false)
+  createdAt   DateTime      @default(now())
+  posts       ForumPost[]
+  members     ForumMember[]
+}
+
+model ForumMember {
+  id       String @id @default(cuid())
+  forumId  String
+  forum    Forum  @relation(fields: [forumId], references: [id], onDelete: Cascade)
+  liveryId String
+  livery   Livery @relation(fields: [liveryId], references: [id], onDelete: Cascade)
+
+  @@unique([forumId, liveryId])
+}
+
+model ForumPost {
+  id        String   @id @default(cuid())
+  forumId   String
+  forum     Forum    @relation(fields: [forumId], references: [id], onDelete: Cascade)
+  authorId  String?
+  author    User?    @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  body      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Arena booking
+// ---------------------------------------------------------------------------
+
+model Arena {
+  id       String    @id @default(cuid())
+  name     String
+  bookings Booking[]
+}
+
+enum BookingStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+model Booking {
+  id                String        @id @default(cuid())
+  arenaId           String
+  arena             Arena         @relation(fields: [arenaId], references: [id], onDelete: Cascade)
+  liveryId          String
+  livery            Livery        @relation(fields: [liveryId], references: [id], onDelete: Cascade)
+  userId            String?
+  user              User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  start             DateTime
+  end               DateTime
+  status            BookingStatus @default(PENDING)
+  isRecurring       Boolean       @default(false)
+  recurrenceWeeks   Int?
+  recurrenceParentId String?
+  notes             String?
+  createdAt         DateTime      @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Global settings (module on/off + store banner)
+// ---------------------------------------------------------------------------
+
+model Setting {
+  key   String @id
+  value String
+}
