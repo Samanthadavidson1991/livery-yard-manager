@@ -12,7 +12,7 @@ export async function generateBill(formData: FormData) {
   const liveryId = String(formData.get("liveryId") ?? "");
   if (!liveryId) return;
 
-  const [services, orders] = await Promise.all([
+  const [services, orders, sharedItems] = await Promise.all([
     prisma.liveryService.findMany({
       where: { liveryId, active: true },
       include: { catalogItem: true },
@@ -21,9 +21,12 @@ export async function generateBill(formData: FormData) {
       where: { liveryId, billed: false },
       include: { catalogItem: true },
     }),
+    prisma.sharedBillItem.findMany({
+      where: { active: true, liveries: { some: { liveryId } } },
+    }),
   ]);
 
-  if (services.length === 0 && orders.length === 0) return;
+  if (services.length === 0 && orders.length === 0 && sharedItems.length === 0) return;
 
   const now = new Date();
   const title = `Invoice ${now.toLocaleDateString("en-GB", { month: "long", year: "numeric" })}`;
@@ -38,6 +41,11 @@ export async function generateBill(formData: FormData) {
       description: `${o.catalogItem.name} (store)`,
       quantity: o.quantity,
       unitPrice: o.catalogItem.price,
+    })),
+    ...sharedItems.map((s) => ({
+      description: s.description,
+      quantity: s.quantity,
+      unitPrice: s.unitPrice,
     })),
   ];
 
