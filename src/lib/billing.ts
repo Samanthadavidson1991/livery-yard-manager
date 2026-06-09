@@ -63,6 +63,10 @@ export async function reconcileAutoSharedItems(): Promise<void> {
   });
 
   for (const item of items) {
+    // Respect the optional date window: skip items not yet started or expired.
+    if (item.startDate && now < item.startDate) continue;
+    if (item.endDate && now > item.endDate) continue;
+
     const freq = item.frequency ?? "MONTHLY";
     const period = periodKey(now, freq);
     const title = periodTitle(now, freq);
@@ -90,7 +94,8 @@ export async function reconcileAutoSharedItems(): Promise<void> {
               billId: bill.id,
               description: item.description,
               quantity: item.quantity,
-              unitPrice: item.unitPrice,
+              // Per-livery override price when set, else the item's default.
+              unitPrice: a.unitPrice ?? item.unitPrice,
             },
           }),
         ]);

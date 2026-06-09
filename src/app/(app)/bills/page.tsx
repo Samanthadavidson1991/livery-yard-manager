@@ -41,18 +41,30 @@ type SharedItem = {
   active: boolean;
   autoAdd: boolean;
   frequency: string | null;
-  liveries: { liveryId: string }[];
+  startDate: Date | null;
+  endDate: Date | null;
+  liveries: { liveryId: string; unitPrice: number | null }[];
 };
+
+// Format a Date for an <input type="date"> (YYYY-MM-DD), or "" when null.
+function toDateInput(d: Date | null): string {
+  if (!d) return "";
+  return new Date(d).toISOString().slice(0, 10);
+}
 
 function AutoAddFields({
   autoAdd,
   frequency,
+  startDate,
+  endDate,
 }: {
   autoAdd: boolean;
   frequency: string | null;
+  startDate: Date | null;
+  endDate: Date | null;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-3">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
       <label className="flex items-center gap-2 text-sm">
         <input
           type="checkbox"
@@ -73,6 +85,25 @@ function AutoAddFields({
           <option value="WEEKLY">Week</option>
         </select>
       </label>
+      <label className="flex items-center gap-2 text-sm">
+        <span className="text-gray-500">from</span>
+        <input
+          type="date"
+          name="startDate"
+          defaultValue={toDateInput(startDate)}
+          className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm bg-white focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+        />
+      </label>
+      <label className="flex items-center gap-2 text-sm">
+        <span className="text-gray-500">until</span>
+        <input
+          type="date"
+          name="endDate"
+          defaultValue={toDateInput(endDate)}
+          className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm bg-white focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+        />
+      </label>
+      <span className="text-xs text-gray-400">(dates optional; blank = no limit)</span>
     </div>
   );
 }
@@ -80,24 +111,40 @@ function AutoAddFields({
 function LiveryCheckboxes({
   liveries,
   selected,
+  overrides,
 }: {
   liveries: LiveryOption[];
   selected: Set<string>;
+  overrides?: Map<string, number | null>;
 }) {
   return (
-    <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-      {liveries.map((l) => (
-        <label key={l.id} className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            name="liveryIds"
-            value={l.id}
-            defaultChecked={selected.has(l.id)}
-            className="h-4 w-4 rounded border-gray-300 text-brand-600"
-          />
-          <span className="text-gray-700">{l.name}</span>
-        </label>
-      ))}
+    <div className="flex flex-col gap-1.5">
+      {liveries.map((l) => {
+        const ov = overrides?.get(l.id);
+        return (
+          <div key={l.id} className="flex items-center gap-2 text-sm">
+            <label className="flex items-center gap-2 min-w-[10rem]">
+              <input
+                type="checkbox"
+                name="liveryIds"
+                value={l.id}
+                defaultChecked={selected.has(l.id)}
+                className="h-4 w-4 rounded border-gray-300 text-brand-600"
+              />
+              <span className="text-gray-700">{l.name}</span>
+            </label>
+            <span className="text-gray-400 text-xs">£</span>
+            <input
+              type="number"
+              step="0.01"
+              name={`override_${l.id}`}
+              defaultValue={ov != null ? String(ov) : ""}
+              placeholder="default price"
+              className="w-28 rounded-lg border border-gray-300 px-2 py-1 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            />
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -121,6 +168,9 @@ function SharedItemsManager({
         <ul className="divide-y divide-gray-100 mb-6">
           {items.map((item) => {
             const selected = new Set(item.liveries.map((a) => a.liveryId));
+            const overrides = new Map(
+              item.liveries.map((a) => [a.liveryId, a.unitPrice]),
+            );
             return (
               <li key={item.id} className="py-4">
                 <form action={updateSharedBillItem} className="space-y-3">
@@ -131,6 +181,12 @@ function SharedItemsManager({
                       <Badge color="blue">
                         Auto · {item.frequency === "WEEKLY" ? "Weekly" : "Monthly"}
                       </Badge>
+                    )}
+                    {item.autoAdd && (item.startDate || item.endDate) && (
+                      <span className="text-xs text-gray-500">
+                        {item.startDate ? `from ${toDateInput(item.startDate)}` : ""}
+                        {item.endDate ? ` until ${toDateInput(item.endDate)}` : ""}
+                      </span>
                     )}
                     <span className="text-sm text-gray-400">
                       Applies to {selected.size} liver{selected.size === 1 ? "y" : "ies"}
@@ -167,8 +223,17 @@ function SharedItemsManager({
                       />
                     </label>
                   </div>
-                  <LiveryCheckboxes liveries={liveries} selected={selected} />
-                  <AutoAddFields autoAdd={item.autoAdd} frequency={item.frequency} />
+                  <LiveryCheckboxes
+                    liveries={liveries}
+                    selected={selected}
+                    overrides={overrides}
+                  />
+                  <AutoAddFields
+                    autoAdd={item.autoAdd}
+                    frequency={item.frequency}
+                    startDate={item.startDate}
+                    endDate={item.endDate}
+                  />
                   <div className="flex items-center gap-4">
                     <SubmitButton>Save changes</SubmitButton>
                   </div>
@@ -222,7 +287,7 @@ function SharedItemsManager({
             <LiveryCheckboxes liveries={liveries} selected={new Set()} />
           </div>
         )}
-        <AutoAddFields autoAdd={false} frequency={null} />
+        <AutoAddFields autoAdd={false} frequency={null} startDate={null} endDate={null} />
         <SubmitButton>Add shared item</SubmitButton>
       </form>
     </Card>
@@ -335,13 +400,19 @@ export default async function BillsPage() {
     // placed on a bill by the reconcile above.
     prisma.sharedBillItem.findMany({
       where: { active: true, autoAdd: false, liveries: { some: { liveryId } } },
+      // Load this livery's assignment row so we can honor a price override.
+      include: { liveries: { where: { liveryId } } },
     }),
   ]);
+
+  // Effective unit price for a shared item for this livery (override or default).
+  const sharedPrice = (s: (typeof sharedItems)[number]) =>
+    s.liveries[0]?.unitPrice ?? s.unitPrice;
 
   const currentTotal =
     services.reduce((s, x) => s + x.catalogItem.price, 0) +
     orders.reduce((s, x) => s + x.catalogItem.price * x.quantity, 0) +
-    sharedItems.reduce((s, x) => s + x.unitPrice * x.quantity, 0);
+    sharedItems.reduce((s, x) => s + sharedPrice(x) * x.quantity, 0);
 
   return (
     <div>
@@ -374,7 +445,7 @@ export default async function BillsPage() {
                   {s.description}
                   {s.quantity !== 1 ? ` × ${s.quantity}` : ""}
                 </span>
-                <span>{money(s.unitPrice * s.quantity)}</span>
+                <span>{money(sharedPrice(s) * s.quantity)}</span>
               </li>
             ))}
             <li className="flex justify-between py-2 font-semibold border-t border-gray-100 mt-1">

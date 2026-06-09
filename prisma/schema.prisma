@@ -198,6 +198,10 @@ model SharedBillItem {
   // admin generates a bill.
   autoAdd     Boolean  @default(false)
   frequency   String?  // MONTHLY | WEEKLY, used when autoAdd is on
+  // Optional date window for auto-add. Outside this window the item is not
+  // auto-billed (lets a recurring charge start later and/or stop on a date).
+  startDate   DateTime?
+  endDate     DateTime?
   createdAt   DateTime @default(now())
 
   liveries     SharedBillItemLivery[]
@@ -211,6 +215,9 @@ model SharedBillItemLivery {
   sharedBillItem   SharedBillItem @relation(fields: [sharedBillItemId], references: [id], onDelete: Cascade)
   liveryId         String
   livery           Livery         @relation(fields: [liveryId], references: [id], onDelete: Cascade)
+  // Optional per-livery price override. When null, the item's own unitPrice is
+  // used for this livery.
+  unitPrice        Float?
 
   @@unique([sharedBillItemId, liveryId])
 }

@@ -26,6 +26,8 @@ export async function generateBill(formData: FormData) {
     }),
     prisma.sharedBillItem.findMany({
       where: { active: true, autoAdd: false, liveries: { some: { liveryId } } },
+      // Load this livery's assignment row so we can honor a price override.
+      include: { liveries: { where: { liveryId } } },
     }),
   ]);
 
@@ -45,7 +47,8 @@ export async function generateBill(formData: FormData) {
     ...sharedItems.map((s) => ({
       description: s.description,
       quantity: s.quantity,
-      unitPrice: s.unitPrice,
+      // Per-livery override price when set, else the item's default.
+      unitPrice: s.liveries[0]?.unitPrice ?? s.unitPrice,
     })),
   ];
 

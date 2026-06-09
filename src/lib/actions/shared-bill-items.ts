@@ -9,6 +9,28 @@ function parseFrequency(formData: FormData): string | null {
   return f === "WEEKLY" ? "WEEKLY" : "MONTHLY";
 }
 
+// Parse a <input type="date"> value (YYYY-MM-DD) into a Date, or null if blank.
+function parseDate(formData: FormData, name: string): Date | null {
+  const v = String(formData.get(name) ?? "").trim();
+  if (!v) return null;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+// Build the per-livery assignment rows, reading an optional price override from
+// the field `override_<liveryId>` for each ticked livery. Blank = no override.
+function assignmentRows(
+  formData: FormData,
+  liveryIds: string[],
+): { liveryId: string; unitPrice: number | null }[] {
+  return liveryIds.map((liveryId) => {
+    const raw = String(formData.get(`override_${liveryId}`) ?? "").trim();
+    const n = raw === "" ? null : Number(raw);
+    const unitPrice = n != null && Number.isFinite(n) ? n : null;
+    return { liveryId, unitPrice };
+  });
+}
+
 export async function createSharedBillItem(formData: FormData) {
   await requireAdmin();
   const description = String(formData.get("description") ?? "").trim();
@@ -17,6 +39,8 @@ export async function createSharedBillItem(formData: FormData) {
   const unitPrice = Number(formData.get("unitPrice") ?? 0) || 0;
   const autoAdd = formData.get("autoAdd") != null;
   const frequency = autoAdd ? parseFrequency(formData) : null;
+  const startDate = autoAdd ? parseDate(formData, "startDate") : null;
+  const endDate = autoAdd ? parseDate(formData, "endDate") : null;
   const liveryIds = formData.getAll("liveryIds").map((v) => String(v));
 
   await prisma.sharedBillItem.create({
@@ -26,7 +50,9 @@ export async function createSharedBillItem(formData: FormData) {
       unitPrice,
       autoAdd,
       frequency,
-      liveries: { create: liveryIds.map((liveryId) => ({ liveryId })) },
+      startDate,
+      endDate,
+      liveries: { create: assignmentRows(formData, liveryIds) },
     },
   });
   revalidatePath("/bills");
@@ -42,17 +68,23 @@ export async function updateSharedBillItem(formData: FormData) {
   const unitPrice = Number(formData.get("unitPrice") ?? 0) || 0;
   const autoAdd = formData.get("autoAdd") != null;
   const frequency = autoAdd ? parseFrequency(formData) : null;
+  const startDate = autoAdd ? parseDate(formData, "startDate") : null;
+  const endDate = autoAdd ? parseDate(formData, "endDate") : null;
   const liveryIds = formData.getAll("liveryIds").map((v) => String(v));
 
   // Replace the assignment set with the submitted checkboxes.
   await prisma.$transaction([
     prisma.sharedBillItem.update({
       where: { id },
-      data: { description, quantity, unitPrice, autoAdd, frequency },
+      data: { description, quantity, unitPrice, autoAdd, frequency, startDate, endDate },
     }),
     prisma.sharedBillItemLivery.deleteMany({ where: { sharedBillItemId: id } }),
     prisma.sharedBillItemLivery.createMany({
-      data: liveryIds.map((liveryId) => ({ sharedBillItemId: id, liveryId })),
+      data: assignmentRows(formData, liveryIds).map((r) => ({
+        sharedBillItemId: id,
+        liveryId: r.liveryId,
+        unitPrice: r.unitPrice,
+      })),
     }),
   ]);
   revalidatePath("/bills");
