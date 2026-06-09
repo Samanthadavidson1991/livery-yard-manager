@@ -193,9 +193,15 @@ model SharedBillItem {
   quantity    Float    @default(1)
   unitPrice   Float    @default(0)
   active      Boolean  @default(true)
+  // When autoAdd is on, the item is added to each assigned livery's bill once
+  // per period (frequency) automatically. When off, it is only added when an
+  // admin generates a bill.
+  autoAdd     Boolean  @default(false)
+  frequency   String?  // MONTHLY | WEEKLY, used when autoAdd is on
   createdAt   DateTime @default(now())
 
-  liveries    SharedBillItemLivery[]
+  liveries     SharedBillItemLivery[]
+  applications SharedBillItemApplication[]
 }
 
 // Join: which liveries a shared bill item applies to (the checkbox)
@@ -207,6 +213,19 @@ model SharedBillItemLivery {
   livery           Livery         @relation(fields: [liveryId], references: [id], onDelete: Cascade)
 
   @@unique([sharedBillItemId, liveryId])
+}
+
+// Tracks that an auto-add shared item was applied to a livery for a given
+// period, so it is never double-billed.
+model SharedBillItemApplication {
+  id               String         @id @default(cuid())
+  sharedBillItemId String
+  sharedBillItem   SharedBillItem @relation(fields: [sharedBillItemId], references: [id], onDelete: Cascade)
+  liveryId         String
+  period           String
+  createdAt        DateTime       @default(now())
+
+  @@unique([sharedBillItemId, liveryId, period])
 }
 
 enum CatalogType {

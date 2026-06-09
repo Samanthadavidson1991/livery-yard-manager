@@ -4,9 +4,12 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth";
+import { findOrCreateDraftBill, periodTitle } from "@/lib/billing";
 import type { BillStatus } from "@prisma/client";
 
-// Generate a bill for a livery from active recurring services + unbilled store orders.
+// Generate a bill for a livery from active recurring services + unbilled store
+// orders + manual (non auto-add) shared items. Auto-add shared items are
+// applied separately by reconcileAutoSharedItems.
 export async function generateBill(formData: FormData) {
   await requireAdmin();
   const liveryId = String(formData.get("liveryId") ?? "");
@@ -22,14 +25,11 @@ export async function generateBill(formData: FormData) {
       include: { catalogItem: true },
     }),
     prisma.sharedBillItem.findMany({
-      where: { active: true, liveries: { some: { liveryId } } },
+      where: { active: true, autoAdd: false, liveries: { some: { liveryId } } },
     }),
   ]);
 
   if (services.length === 0 && orders.length === 0 && sharedItems.length === 0) return;
-
-  const now = new Date();
-  const title = `Invoice ${now.toLocaleDateString("en-GB", { month: "long", year: "numeric" })}`;
 
   const lines = [
     ...services.map((s) => ({
@@ -49,13 +49,12 @@ export async function generateBill(formData: FormData) {
     })),
   ];
 
-  await prisma.bill.create({
-    data: {
-      liveryId,
-      title,
-      status: "DRAFT",
-      lines: { create: lines },
-    },
+  const bill = await findOrCreateDraftBill(
+    liveryId,
+    periodTitle(new Date(), "MONTHLY"),
+  );
+  await prisma.billLine.createMany({
+    data: lines.map((l) => ({ ...l, billId: bill.id })),
   });
 
   // Mark the store orders as billed so they don't get billed again

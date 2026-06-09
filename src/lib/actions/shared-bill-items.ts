@@ -4,12 +4,19 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/auth";
 
+function parseFrequency(formData: FormData): string | null {
+  const f = String(formData.get("frequency") ?? "MONTHLY");
+  return f === "WEEKLY" ? "WEEKLY" : "MONTHLY";
+}
+
 export async function createSharedBillItem(formData: FormData) {
   await requireAdmin();
   const description = String(formData.get("description") ?? "").trim();
   if (!description) return;
   const quantity = Number(formData.get("quantity") ?? 1) || 1;
   const unitPrice = Number(formData.get("unitPrice") ?? 0) || 0;
+  const autoAdd = formData.get("autoAdd") != null;
+  const frequency = autoAdd ? parseFrequency(formData) : null;
   const liveryIds = formData.getAll("liveryIds").map((v) => String(v));
 
   await prisma.sharedBillItem.create({
@@ -17,6 +24,8 @@ export async function createSharedBillItem(formData: FormData) {
       description,
       quantity,
       unitPrice,
+      autoAdd,
+      frequency,
       liveries: { create: liveryIds.map((liveryId) => ({ liveryId })) },
     },
   });
@@ -31,13 +40,15 @@ export async function updateSharedBillItem(formData: FormData) {
   if (!description) return;
   const quantity = Number(formData.get("quantity") ?? 1) || 1;
   const unitPrice = Number(formData.get("unitPrice") ?? 0) || 0;
+  const autoAdd = formData.get("autoAdd") != null;
+  const frequency = autoAdd ? parseFrequency(formData) : null;
   const liveryIds = formData.getAll("liveryIds").map((v) => String(v));
 
   // Replace the assignment set with the submitted checkboxes.
   await prisma.$transaction([
     prisma.sharedBillItem.update({
       where: { id },
-      data: { description, quantity, unitPrice },
+      data: { description, quantity, unitPrice, autoAdd, frequency },
     }),
     prisma.sharedBillItemLivery.deleteMany({ where: { sharedBillItemId: id } }),
     prisma.sharedBillItemLivery.createMany({

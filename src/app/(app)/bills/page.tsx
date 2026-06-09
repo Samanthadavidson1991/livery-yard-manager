@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireModule } from "@/lib/access";
 import { prisma } from "@/lib/prisma";
 import { generateBill } from "@/lib/actions/bills";
+import { reconcileAutoSharedItems } from "@/lib/billing";
 import {
   createSharedBillItem,
   updateSharedBillItem,
@@ -38,8 +39,43 @@ type SharedItem = {
   quantity: number;
   unitPrice: number;
   active: boolean;
+  autoAdd: boolean;
+  frequency: string | null;
   liveries: { liveryId: string }[];
 };
+
+function AutoAddFields({
+  autoAdd,
+  frequency,
+}: {
+  autoAdd: boolean;
+  frequency: string | null;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          name="autoAdd"
+          defaultChecked={autoAdd}
+          className="h-4 w-4 rounded border-gray-300 text-brand-600"
+        />
+        <span className="text-gray-700">Auto-add recurring</span>
+      </label>
+      <label className="flex items-center gap-2 text-sm">
+        <span className="text-gray-500">every</span>
+        <select
+          name="frequency"
+          defaultValue={frequency ?? "MONTHLY"}
+          className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm bg-white focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+        >
+          <option value="MONTHLY">Month</option>
+          <option value="WEEKLY">Week</option>
+        </select>
+      </label>
+    </div>
+  );
+}
 
 function LiveryCheckboxes({
   liveries,
@@ -91,6 +127,11 @@ function SharedItemsManager({
                   <input type="hidden" name="id" value={item.id} />
                   <div className="flex items-center gap-2">
                     {!item.active && <Badge color="red">Inactive</Badge>}
+                    {item.autoAdd && (
+                      <Badge color="blue">
+                        Auto · {item.frequency === "WEEKLY" ? "Weekly" : "Monthly"}
+                      </Badge>
+                    )}
                     <span className="text-sm text-gray-400">
                       Applies to {selected.size} liver{selected.size === 1 ? "y" : "ies"}
                     </span>
@@ -127,6 +168,7 @@ function SharedItemsManager({
                     </label>
                   </div>
                   <LiveryCheckboxes liveries={liveries} selected={selected} />
+                  <AutoAddFields autoAdd={item.autoAdd} frequency={item.frequency} />
                   <div className="flex items-center gap-4">
                     <SubmitButton>Save changes</SubmitButton>
                   </div>
@@ -180,6 +222,7 @@ function SharedItemsManager({
             <LiveryCheckboxes liveries={liveries} selected={new Set()} />
           </div>
         )}
+        <AutoAddFields autoAdd={false} frequency={null} />
         <SubmitButton>Add shared item</SubmitButton>
       </form>
     </Card>
@@ -190,6 +233,9 @@ export default async function BillsPage() {
   const user = await requireModule("bills");
 
   if (user.role === "ADMIN") {
+    // Apply any due auto-add recurring items before reading current state.
+    await reconcileAutoSharedItems();
+
     const [liveries, sharedItems] = await Promise.all([
       prisma.livery.findMany({
         orderBy: { name: "asc" },
@@ -205,13 +251,15 @@ export default async function BillsPage() {
       }),
     ]);
 
-    const activeSharedCountByLivery = new Map<string, number>();
+    // Only manual (non auto-add) shared items count toward the "generate bill"
+    // button — auto-add items are billed automatically by the reconcile above.
+    const manualSharedCountByLivery = new Map<string, number>();
     for (const item of sharedItems) {
-      if (!item.active) continue;
+      if (!item.active || item.autoAdd) continue;
       for (const a of item.liveries) {
-        activeSharedCountByLivery.set(
+        manualSharedCountByLivery.set(
           a.liveryId,
-          (activeSharedCountByLivery.get(a.liveryId) ?? 0) + 1,
+          (manualSharedCountByLivery.get(a.liveryId) ?? 0) + 1,
         );
       }
     }
@@ -225,7 +273,7 @@ export default async function BillsPage() {
             const pending =
               l.services.length +
               l.storeOrders.length +
-              (activeSharedCountByLivery.get(l.id) ?? 0);
+              (manualSharedCountByLivery.get(l.id) ?? 0);
             return (
               <Card key={l.id} className="p-5">
                 <div className="flex items-center justify-between mb-3">
@@ -266,6 +314,9 @@ export default async function BillsPage() {
 
   // Livery view
   const liveryId = user.liveryId ?? "__none__";
+  // Apply any due auto-add recurring items so they appear on this livery's bills.
+  await reconcileAutoSharedItems();
+
   const [bills, services, orders, sharedItems] = await Promise.all([
     prisma.bill.findMany({
       where: { liveryId },
@@ -280,8 +331,10 @@ export default async function BillsPage() {
       where: { liveryId, billed: false },
       include: { catalogItem: true },
     }),
+    // Only manual shared items are "not yet invoiced"; auto-add ones are already
+    // placed on a bill by the reconcile above.
     prisma.sharedBillItem.findMany({
-      where: { active: true, liveries: { some: { liveryId } } },
+      where: { active: true, autoAdd: false, liveries: { some: { liveryId } } },
     }),
   ]);
 
